@@ -31,19 +31,35 @@ typedef struct {
 
 meteo_data meteo;
 
-#define ROOM 0
+#define DHT_ROOM_PIN 23
+#define DHT_WALL_PIN 33
+#define DHT_OUTSIDE_PIN 23
+#define DHT_CEILING_PIN 18
 
-#define DHT_ROOM_PIN 17
+#define ROOM_IDX 0
+#define WALL_IDX 1
+#define OUTSIDE_IDX 2
+#define CEILING_IDX 3
+#define N_DHTS 4
+
+DHT dhts [N_DHTS] = {
+  DHT(DHT_ROOM_PIN, DHT22),
+  DHT(DHT_WALL_PIN, DHT22),
+  DHT(DHT_OUTSIDE_PIN, DHT22),
+  DHT(DHT_CEILING_PIN, DHT22)
+};
 
 // D1 mini default IO21=SDA, IO22=SCL
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
-DHT dht(DHT_ROOM_PIN, DHT22);
+
 //Adafruit_CCS811 ccs;
 
 // RTC_DATA_ATTR int bootCount = 0; // persistent after sleep
 
 void initialize() {
-  dht.begin();
+  for (int i=0; i<N_DHTS; ++i) {
+    dhts[i].begin();
+  }
   //ccs.begin();
   // text display tests
      
@@ -56,32 +72,26 @@ void initialize() {
 }
 
 void read_sensors() {
-  meteo.dhts[ROOM].temperature = dht.readTemperature();
-  meteo.dhts[ROOM].humidity = dht.readHumidity();
+  for (int i=0; i<N_DHTS; ++i) {
+    meteo.dhts[i].temperature = dhts[i].readTemperature();
+    meteo.dhts[i].humidity = dhts[i].readHumidity();
+  }
 
   // float cssTemp = ccs.calculateTemperature();
-  // ccs.setTempOffset(cssTemp - meteo.dhts[ROOM].temperature);
+  // ccs.setTempOffset(cssTemp - meteo.dhts[ROOM_IDX].temperature);
 
   // meteo.eCO2 = ccs.geteCO2();
   // meteo.TVOC = ccs.getTVOC();
 }
 
-void update_serial() {
-  Serial.print("Temp ");
-  Serial.print(meteo.dhts[ROOM].temperature, 1);
-  Serial.print("\nHum ");
-  Serial.print(meteo.dhts[ROOM].humidity, 1);
-  Serial.println("");
-}
-
 void update_screen() {
   display.clearDisplay();
   display.setCursor(0,20);             
-  display.print("Temp s ");
-  display.print(meteo.dhts[ROOM].temperature, 1);
+  display.print("Temp ");
+  display.print(meteo.dhts[ROOM_IDX].temperature, 1);
   display.print("c\n");
-  display.print("Hum   ");
-  display.print(meteo.dhts[ROOM].humidity, 1);
+  display.print("Hum  ");
+  display.print(meteo.dhts[ROOM_IDX].humidity, 1);
   display.print("%\n");
   display.display();
   //display.print(meteo.eCO2);
@@ -114,7 +124,6 @@ void setup(){
   // while(!ccs.available());
 
   read_sensors();
-  update_serial();
   update_screen();
 
   //Print the wakeup reason for ESP32
