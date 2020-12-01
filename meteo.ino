@@ -49,6 +49,13 @@ DHT dhts [N_DHTS] = {
   DHT(DHT_CEILING_PIN, DHT22)
 };
 
+String dht_locations [N_DHTS] = {
+  "Room",
+  "Wall",
+  "Outside",
+  "Ceiling"
+};
+
 // D1 mini default IO21=SDA, IO22=SCL
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 
@@ -86,14 +93,19 @@ void read_sensors() {
 
 void update_screen() {
   display.clearDisplay();
-  display.setCursor(0,20);             
-  display.print("Temp ");
-  display.print(meteo.dhts[ROOM_IDX].temperature, 1);
-  display.print("c\n");
-  display.print("Hum  ");
-  display.print(meteo.dhts[ROOM_IDX].humidity, 1);
-  display.print("%\n");
-  display.display();
+  display.setCursor(0,20);
+  for (int i=0; i<N_DHTS; ++i) {
+    display.println(dht_locations[i]);           
+    display.print("Temp ");
+    display.print(meteo.dhts[i].temperature, 1);
+    display.print("c\n");
+    display.print("Hum  ");
+    display.print(meteo.dhts[i].humidity, 1);
+    display.print("%\n");
+    display.display();
+    delay(2000);  
+ }
+
   //display.print(meteo.eCO2);
   //display.print(meteo.TVOC);
 }
