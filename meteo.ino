@@ -32,9 +32,9 @@ typedef struct {
 meteo_data meteo;
 
 #define DHT_ROOM_PIN 23
-#define DHT_WALL_PIN 33
-#define DHT_OUTSIDE_PIN 23
-#define DHT_CEILING_PIN 18
+#define DHT_WALL_PIN 18
+#define DHT_OUTSIDE_PIN 33
+#define DHT_CEILING_PIN 23
 
 #define ROOM_IDX 0
 #define WALL_IDX 1
@@ -92,18 +92,25 @@ void read_sensors() {
 }
 
 void update_screen() {
-  display.clearDisplay();
-  display.setCursor(0,20);
   for (int i=0; i<N_DHTS; ++i) {
-    display.println(dht_locations[i]);           
+    display.clearDisplay();
+    display.setCursor(0,20);
+
+    Serial.println(dht_locations[i]);
+
+    display.println(dht_locations[i]);    
+    Serial.println("hiloc");
+       
     display.print("Temp ");
     display.print(meteo.dhts[i].temperature, 1);
+    Serial.println("hitemp");
+
     display.print("c\n");
     display.print("Hum  ");
     display.print(meteo.dhts[i].humidity, 1);
     display.print("%\n");
     display.display();
-    delay(2000);  
+    delay(3000);  
  }
 
   //display.print(meteo.eCO2);
