@@ -2,7 +2,7 @@
 #include <Wire.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
-#include <Adafruit_CCS811.h>
+#include <ccs811.h>
 
 #include <Fonts/FreeMono9pt7b.h>
 
@@ -21,20 +21,30 @@
 typedef struct {
     float temperature;
     float humidity;
+    bool error;
 } dht_data;
 
 typedef struct {
+    uint16_t eCO2;
+    uint16_t TVOC;
+    bool error;
+} ccs_data;
+
+uint16_t ccs_mode = CCS811_MODE_10SEC;
+// uint_16 ccs_mode = CCS811_MODE_10SEC;
+// uint_16 ccs_mode = CCS811_MODE_60SEC;
+
+typedef struct {
     dht_data dhts[4];
-    float eCO2;
-    float TVOC;
+    ccs_data ccs;
 } meteo_data;
 
 meteo_data meteo;
 
-#define DHT_ROOM_PIN 23
-#define DHT_WALL_PIN 18
+#define DHT_ROOM_PIN 16
+#define DHT_WALL_PIN 17
 #define DHT_OUTSIDE_PIN 33
-#define DHT_CEILING_PIN 23
+#define DHT_CEILING_PIN 26
 
 #define ROOM_IDX 0
 #define WALL_IDX 1
@@ -59,94 +69,118 @@ String dht_locations [N_DHTS] = {
 // D1 mini default IO21=SDA, IO22=SCL
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 
-//Adafruit_CCS811 ccs;
+CCS811 ccs;
 
 // RTC_DATA_ATTR int bootCount = 0; // persistent after sleep
 
-void initialize() {
+void initialize(bool initializeCCS) {
   for (int i=0; i<N_DHTS; ++i) {
     dhts[i].begin();
   }
-  //ccs.begin();
-  // text display tests
-     
+
   if(!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) { // Address 0x3D for 128x64
-    Serial.println(F("SSD1306 allocation failed"));
-    for(;;); // Don't proceed, loop forever
+    Serial.println("SSD1306 allocation failed");
   }
+
+  if (initializeCCS) {
+    Serial.println("initializing CCS!");
+    ccs.set_i2cdelay(50); // Needed for ESP8266 because it doesn't handle I2C clock stretch correctly
+
+
+    if(!ccs.begin()) {
+      Serial.println("CCS881: Failed to begin");
+    } 
+
+    // Print CCS811 versions
+    Serial.print("setup: hardware    version: "); Serial.println(ccs.hardware_version(),HEX);
+    Serial.print("setup: bootloader  version: "); Serial.println(ccs.bootloader_version(),HEX);
+    Serial.print("setup: application version: "); Serial.println(ccs.application_version(),HEX);
+  
+    if (!ccs.start(ccs_mode)) {
+      Serial.println("CCS881: Failed to start sensing");
+    }
+  }
+  
   display.setFont(&FreeMono9pt7b);
-  display.setTextColor(WHITE);   
+  display.setTextColor(WHITE);
 }
 
 void read_sensors() {
   for (int i=0; i<N_DHTS; ++i) {
     meteo.dhts[i].temperature = dhts[i].readTemperature();
     meteo.dhts[i].humidity = dhts[i].readHumidity();
+    meteo.dhts[i].error = isnan(meteo.dhts[i].temperature);
   }
 
-  // float cssTemp = ccs.calculateTemperature();
-  // ccs.setTempOffset(cssTemp - meteo.dhts[ROOM_IDX].temperature);
-
-  // meteo.eCO2 = ccs.geteCO2();
-  // meteo.TVOC = ccs.getTVOC();
+  uint16_t errstat, raw;
+  ccs.read(&meteo.ccs.eCO2, &meteo.ccs.TVOC, &errstat, &raw);
+  meteo.ccs.error = (errstat != CCS811_ERRSTAT_OK);
+  if (errstat == CCS811_ERRSTAT_OK_NODATA) {
+    Serial.println("CCS waiting for new data");
+  } else if (errstat & CCS811_ERRSTAT_I2CFAIL) {
+    Serial.println("CCS i2c error");
+  } else if (meteo.ccs.error) {
+    Serial.println("CCS unknown error");
+  }
 }
+
 
 void update_screen() {
-  for (int i=0; i<N_DHTS; ++i) {
+  int screen_delay = 3000;
+
+  if (!meteo.ccs.error) {
     display.clearDisplay();
     display.setCursor(0,20);
-
-    Serial.println(dht_locations[i]);
-
-    display.println(dht_locations[i]);    
-    Serial.println("hiloc");
-       
-    display.print("Temp ");
-    display.print(meteo.dhts[i].temperature, 1);
-    Serial.println("hitemp");
-
-    display.print("c\n");
-    display.print("Hum  ");
-    display.print(meteo.dhts[i].humidity, 1);
-    display.print("%\n");
+    
+    display.println("Air quality ");
+    display.print("CO2 ");
+    display.print(meteo.ccs.eCO2);
+    display.print("\n");
+    display.print("VOC ");
+    display.print(meteo.ccs.TVOC);
+    display.print("\n");
+    
     display.display();
-    delay(3000);  
- }
-
-  //display.print(meteo.eCO2);
-  //display.print(meteo.TVOC);
-}
-
-void print_wakeup_reason(){
-  esp_sleep_wakeup_cause_t wakeup_reason;
-
-  wakeup_reason = esp_sleep_get_wakeup_cause();
-
-  switch(wakeup_reason)
-  {
-    case ESP_SLEEP_WAKEUP_EXT0 : Serial.println("Wakeup caused by external signal using RTC_IO"); break;
-    case ESP_SLEEP_WAKEUP_EXT1 : Serial.println("Wakeup caused by external signal using RTC_CNTL"); break;
-    case ESP_SLEEP_WAKEUP_TIMER : Serial.println("Wakeup caused by timer"); break;
-    case ESP_SLEEP_WAKEUP_TOUCHPAD : Serial.println("Wakeup caused by touchpad"); break;
-    case ESP_SLEEP_WAKEUP_ULP : Serial.println("Wakeup caused by ULP program"); break;
-    default : Serial.printf("Wakeup was not caused by deep sleep: %d\n",wakeup_reason); break;
+    delay(screen_delay);
   }
+
+  for (int i=0; i<N_DHTS; ++i) {
+    dht_data cur_dht = meteo.dhts[i];
+
+    if (!cur_dht.error) {
+      display.clearDisplay();
+      display.setCursor(0,20);
+  
+      display.println(dht_locations[i]);
+      display.print("Temp ");
+      display.print(cur_dht.temperature, 1);
+      display.print("c\n");
+      display.print("Hum  ");
+      display.print(cur_dht.humidity, 1);
+      display.print("%\n");
+      display.display();
+      delay(screen_delay);
+    }
+  }
+  display.clearDisplay();
+  display.display();
 }
 
 void setup(){
+  esp_sleep_wakeup_cause_t wakeup_reason;
+  wakeup_reason = esp_sleep_get_wakeup_cause();
+
+  bool initializeCCS = (wakeup_reason != ESP_SLEEP_WAKEUP_TIMER);
+  
   Serial.begin(115200);
   Serial.println("Hello from ESP32");
   Serial.flush();
-  initialize();
+  initialize(initializeCCS);
 
-  delay(5000); 
-  // while(!ccs.available());
+  delay(5000);
 
   read_sensors();
   update_screen();
-
-  //Print the wakeup reason for ESP32
-  print_wakeup_reason();
 
   esp_sleep_enable_timer_wakeup(TIME_TO_SLEEP * uS_TO_S_FACTOR);
 
