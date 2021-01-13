@@ -17,6 +17,7 @@
 
 #define uS_TO_S_FACTOR 1000000  /* Conversion factor for micro seconds to seconds */
 #define TIME_TO_SLEEP  15        /* Time ESP32 will go to sleep (in seconds) */
+#define CCS_MODE CCS811_MODE_10SEC  /* 1s, 10s, 60s*/         
 
 typedef struct {
     float temperature;
@@ -29,10 +30,6 @@ typedef struct {
     uint16_t TVOC;
     bool error;
 } ccs_data;
-
-uint16_t ccs_mode = CCS811_MODE_10SEC;
-// uint_16 ccs_mode = CCS811_MODE_10SEC;
-// uint_16 ccs_mode = CCS811_MODE_60SEC;
 
 typedef struct {
     dht_data dhts[4];
@@ -96,7 +93,7 @@ void initialize(bool initializeCCS) {
     Serial.print("setup: bootloader  version: "); Serial.println(ccs.bootloader_version(),HEX);
     Serial.print("setup: application version: "); Serial.println(ccs.application_version(),HEX);
   
-    if (!ccs.start(ccs_mode)) {
+    if (!ccs.start(CCS_MODE)) {
       Serial.println("CCS881: Failed to start sensing");
     }
   }
@@ -135,10 +132,10 @@ void update_screen() {
     display.println("Air quality ");
     display.print("CO2 ");
     display.print(meteo.ccs.eCO2);
-    display.print("\n");
+    display.print("ppm\n");
     display.print("VOC ");
     display.print(meteo.ccs.TVOC);
-    display.print("\n");
+    display.print("ppb\n");
     
     display.display();
     delay(screen_delay);
