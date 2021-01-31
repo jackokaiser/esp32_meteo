@@ -1,4 +1,4 @@
-#define DEBUG false  //set to true for debug output, false for no debug ouput
+#define DEBUG true  //set to true for debug output, false for no debug ouput
 #define Serial if(DEBUG)Serial
 
 #include <FS.h>
@@ -25,18 +25,17 @@
 
 #define uS_TO_S_FACTOR 1000000  /* Conversion factor for micro seconds to seconds */
 #define TIME_TO_SLEEP  15        /* Time ESP32 will go to sleep (in seconds) */
-#define CCS_MODE CCS811_MODE_10SEC  /* 1s, 10s, 60s*/         
+#define CCS_MODE CCS811_MODE_10SEC  /* 1s, 10s, 60s*/   
+#define LOG_INTERVAL 72 /* number of measures before saving in SD card */
 
 typedef struct {
     float temperature;
     float humidity;
-    bool error;
 } dht_data;
 
 typedef struct {
     uint16_t eCO2;
     uint16_t TVOC;
-    bool error;
 } ccs_data;
 
 typedef struct {
@@ -44,7 +43,17 @@ typedef struct {
     ccs_data ccs;
 } meteo_data;
 
-meteo_data meteo;
+typedef struct {
+    meteo_data data[LOG_INTERVAL];
+    bool dhts_error[4];
+    bool css_error;
+} historized_meteo_data;
+
+RTC_DATA_ATTR historized_meteo_data meteo;
+RTC_DATA_ATTR uint16_t idx_display = 2;
+RTC_DATA_ATTR uint16_t idx_reading = 0;
+
+RTC_DATA_ATTR bool error_led = false;
 
 #define DHT_ROOM_PIN 16
 #define DHT_WALL_PIN 17
@@ -71,156 +80,163 @@ String dht_locations [N_DHTS] = {
   "Ceiling"
 };
 
-// D1 mini default IO21=SDA, IO22=SCL
-Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
-
 CCS811 ccs;
 
-// RTC_DATA_ATTR int bootCount = 0; // persistent after sleep
-
-void initialize(bool initializeCCS) {
+void initialize_sensors(bool initializeCCS) {
   for (int i=0; i<N_DHTS; ++i) {
     dhts[i].begin();
-  }
-
-  if(!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) { // Address 0x3D for 128x64
-    Serial.println("SSD1306 allocation failed");
   }
 
   if (initializeCCS) {
     Serial.println("initializing CCS!");
     ccs.set_i2cdelay(50); // Needed for ESP8266 because it doesn't handle I2C clock stretch correctly
-
-
     if(!ccs.begin()) {
+      error_led = true;
       Serial.println("CCS881: Failed to begin");
     } 
 
-    // Print CCS811 versions
-    Serial.print("setup: hardware    version: "); Serial.println(ccs.hardware_version(),HEX);
-    Serial.print("setup: bootloader  version: "); Serial.println(ccs.bootloader_version(),HEX);
-    Serial.print("setup: application version: "); Serial.println(ccs.application_version(),HEX);
-  
     if (!ccs.start(CCS_MODE)) {
+      error_led = true;
       Serial.println("CCS881: Failed to start sensing");
     }
-  }
-  
-  display.setFont(&FreeMono9pt7b);
-  display.setTextColor(WHITE);
-  if (!initialize_sd_card()) {
-    Serial.println("Failed to initialize SD card");
   }
 }
 
 bool initialize_sd_card () {
   if(!SD.begin(SD_CS)) {
+    error_led = true;
     Serial.println("Card Mount Failed");
     return false;
   }
   
   uint8_t cardType = SD.cardType();
   if(cardType == CARD_NONE) {
+    error_led = true;
     Serial.println("No SD card attached");
     return false;
   }
+}
 
-  String dataString = String(meteo.dhts[0].temperature, 2) + "," + String(meteo.dhts[0].humidity, 2);
-
-  if (!SD.exists("/data.csv")) {
-    Serial.println("File already exists");  
+bool log_sd_card(String filename) {
+  String writeString = "";
+  if (!SD.exists(filename)) {
+    Serial.println("File does not exists yet, adding headers"); 
+    writeString += String("co2, tvoc, temp_room, hum_room, temp_wall, hum_wall, temp_ext, hum_ext, temp_ceiling, hum_ceiling\n");
+  }
+  for (uint16_t ii = 0; ii < LOG_INTERVAL; ii++) {
+    writeString += format_meteo_data(&(meteo.data[ii]));
   }
 
-
-  File file = SD.open("/data.csv", FILE_WRITE);
-  if(file) {
-    file.println("co2, tvoc, temp_room, hum_room, temp_wall, hum_wall, temp_ext, hum_ext, temp_ceiling, hum_ceiling");
-  }
-  else {
+  File file = SD.open(filename, FILE_WRITE);
+  if(!file) {
+    error_led = true;
     Serial.println("Couldn't open file");  
+    return false;
   }
+  file.print(writeString);
   file.close();
   return true;
 }
 
+String format_meteo_data(const meteo_data *data) {
+  String ret = String(data->ccs.eCO2) + "," + String(data->ccs.TVOC);
+  for (uint8_t i_dht = 0; i_dht < 4; i_dht++) {
+    ret += "," + String(data->dhts[i_dht].temperature) + "," + String(data->dhts[i_dht].humidity);
+  }
+  ret += "\n";
+  return ret;
+}
+
 void read_sensors() {
+  meteo_data *data = &(meteo.data[idx_reading]);
+
   for (int i=0; i<N_DHTS; ++i) {
-    meteo.dhts[i].temperature = dhts[i].readTemperature();
-    meteo.dhts[i].humidity = dhts[i].readHumidity();
-    meteo.dhts[i].error = isnan(meteo.dhts[i].temperature);
+    data->dhts[i].temperature = dhts[i].readTemperature();
+    data->dhts[i].humidity = dhts[i].readHumidity();
+    if (isnan(data->dhts[i].temperature)) {
+      error_led = true;
+      Serial.println("DHT error on idx " + String(i));
+    }
   }
 
   uint16_t errstat, raw;
-  ccs.read(&meteo.ccs.eCO2, &meteo.ccs.TVOC, &errstat, &raw);
-  meteo.ccs.error = (errstat != CCS811_ERRSTAT_OK);
+  ccs.read(&(data->ccs.eCO2), &(data->ccs.TVOC), &errstat, &raw);
   if (errstat == CCS811_ERRSTAT_OK_NODATA) {
     Serial.println("CCS waiting for new data");
   } else if (errstat & CCS811_ERRSTAT_I2CFAIL) {
     Serial.println("CCS i2c error");
-  } else if (meteo.ccs.error) {
+    error_led = true;
+  } else if (errstat != CCS811_ERRSTAT_OK) {
     Serial.println("CCS unknown error");
+    error_led = true;
   }
 }
 
-
-void update_screen() {
-  int screen_delay = 3000;
-
-  if (!meteo.ccs.error) {
-    display.clearDisplay();
-    display.setCursor(0,20);
-    
+bool display_screen() {
+  if (idx_display == 0) {
+    return true;
+  }
+  
+  Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
+  
+  if(!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) { // Address 0x3D for 128x64
+    error_led = true;
+    Serial.println("SSD1306 allocation failed");
+  }
+  
+  display.setFont(&FreeMono9pt7b);
+  display.setTextColor(WHITE);
+  display.clearDisplay();
+  display.setCursor(0,20);
+  meteo_data data = meteo.data[idx_reading];
+  if (idx_display == 1) {
     display.println("Air quality ");
     display.print("CO2 ");
-    display.print(meteo.ccs.eCO2);
+    display.print(data.ccs.eCO2);
     display.print("ppm\n");
     display.print("VOC ");
-    display.print(meteo.ccs.TVOC);
-    display.print("ppb\n");
-    
-    display.display();
-    delay(screen_delay);
+    display.print(data.ccs.TVOC);
+    display.print("ppb\n");  
   }
-
-  for (int i=0; i<N_DHTS; ++i) {
-    dht_data cur_dht = meteo.dhts[i];
-
-    if (!cur_dht.error) {
-      display.clearDisplay();
-      display.setCursor(0,20);
-  
-      display.println(dht_locations[i]);
-      display.print("Temp ");
-      display.print(cur_dht.temperature, 1);
-      display.print("c\n");
-      display.print("Hum  ");
-      display.print(cur_dht.humidity, 1);
-      display.print("%\n");
-      display.display();
-      delay(screen_delay);
-    }
+  else {
+    uint8_t i_dht = idx_display - 2;
+    dht_data cur_dht = data.dhts[i_dht];
+    display.println(dht_locations[i_dht]);
+    display.print("Temp ");
+    display.print(cur_dht.temperature, 1);
+    display.print("c\n");
+    display.print("Hum  ");
+    display.print(cur_dht.humidity, 1);
+    display.print("%\n");    
   }
-  display.clearDisplay();
   display.display();
 }
 
 void setup(){
   esp_sleep_wakeup_cause_t wakeup_reason;
   wakeup_reason = esp_sleep_get_wakeup_cause();
+  if (wakeup_reason == ESP_SLEEP_WAKEUP_EXT0) {
+    idx_display = (idx_display + 1) % (2 + 4); // off screen off, ccs and 4 dhts 
+    Serial.println("Changing screen to " + String(idx_display));
+    display_screen();
+  }
+  else {
+    idx_reading += 1;
+    Serial.println("Reading sensor idx " + String(idx_reading));
+    bool initializeCCS = (wakeup_reason != ESP_SLEEP_WAKEUP_TIMER);
+    Serial.println("Reading sensors");
 
-  bool initializeCCS = (wakeup_reason != ESP_SLEEP_WAKEUP_TIMER);
-  
-  Serial.begin(115200);
-  Serial.println("Hello from ESP32");
-  Serial.flush();
-  initialize(initializeCCS);
+    Serial.begin(115200);
+    Serial.flush();
+    initialize_sensors(initializeCCS);
+    delay(5000);
 
-  delay(5000);
-
-  read_sensors();
-  update_screen();
+    read_sensors();
+    display_screen();
+  }
 
   esp_sleep_enable_timer_wakeup(TIME_TO_SLEEP * uS_TO_S_FACTOR);
+  esp_sleep_enable_ext0_wakeup(GPIO_NUM_27, 1);
 
   // shutdown_rf();
   Serial.println("Going to sleep now for " + String(TIME_TO_SLEEP) + "s");
