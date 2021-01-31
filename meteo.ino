@@ -43,14 +43,9 @@ typedef struct {
     ccs_data ccs;
 } meteo_data;
 
-typedef struct {
-    meteo_data data[LOG_INTERVAL];
-    bool dhts_error[4];
-    bool css_error;
-} historized_meteo_data;
 
-RTC_DATA_ATTR historized_meteo_data meteo;
-RTC_DATA_ATTR uint16_t idx_display = 2;
+RTC_DATA_ATTR meteo_data meteo[LOG_INTERVAL];
+RTC_DATA_ATTR uint16_t idx_display = 1;
 RTC_DATA_ATTR uint16_t idx_reading = 0;
 
 RTC_DATA_ATTR bool error_led = false;
@@ -127,7 +122,7 @@ bool log_sd_card(String filename) {
     writeString += String("co2, tvoc, temp_room, hum_room, temp_wall, hum_wall, temp_ext, hum_ext, temp_ceiling, hum_ceiling\n");
   }
   for (uint16_t ii = 0; ii < LOG_INTERVAL; ii++) {
-    writeString += format_meteo_data(&(meteo.data[ii]));
+    writeString += format_meteo_data(&(meteo[ii]));
   }
 
   File file = SD.open(filename, FILE_WRITE);
@@ -151,7 +146,7 @@ String format_meteo_data(const meteo_data *data) {
 }
 
 void read_sensors() {
-  meteo_data *data = &(meteo.data[idx_reading]);
+  meteo_data *data = &(meteo[idx_reading]);
 
   for (int i=0; i<N_DHTS; ++i) {
     data->dhts[i].temperature = dhts[i].readTemperature();
@@ -168,13 +163,23 @@ void read_sensors() {
     Serial.println("CCS waiting for new data");
   } else if (errstat & CCS811_ERRSTAT_I2CFAIL) {
     Serial.println("CCS i2c error");
-    initialize_ccs();
     error_led = true;
   } else if (errstat != CCS811_ERRSTAT_OK) {
     Serial.println("CCS unknown error");
     error_led = true;
   }
 }
+
+bool off_screen() {
+  Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
+  
+  if(!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) { // Address 0x3D for 128x64
+    error_led = true;
+    Serial.println("SSD1306 allocation failed");
+  }
+  display.clearDisplay();
+}
+
 
 bool display_screen() {
   if (idx_display == 0) {
@@ -192,7 +197,7 @@ bool display_screen() {
   display.setTextColor(WHITE);
   display.clearDisplay();
   display.setCursor(0,20);
-  meteo_data data = meteo.data[idx_reading];
+  meteo_data data = meteo[idx_reading];
   if (idx_display == 1) {
     display.println("Air quality ");
     display.print("CO2 ");
@@ -216,26 +221,46 @@ bool display_screen() {
   display.display();
 }
 
+//Function that prints the reason by which ESP32 has been awaken from sleep
+void print_wakeup_reason(esp_sleep_wakeup_cause_t wakeup_reason) {
+  switch(wakeup_reason)
+  {
+    case ESP_SLEEP_WAKEUP_EXT0 : Serial.println("Wakeup caused by external signal using RTC_IO"); break;
+    case ESP_SLEEP_WAKEUP_EXT1 : Serial.println("Wakeup caused by external signal using RTC_CNTL"); break;
+    case ESP_SLEEP_WAKEUP_TIMER : Serial.println("Wakeup caused by timer"); break;
+    case ESP_SLEEP_WAKEUP_TOUCHPAD : Serial.println("Wakeup caused by touchpad"); break;
+    case ESP_SLEEP_WAKEUP_ULP : Serial.println("Wakeup caused by ULP program"); break;
+    default : Serial.printf("Wakeup was not caused by deep sleep: %d\n",wakeup_reason); break;
+  }
+  Serial.flush();
+}
+
 void setup(){
+  Serial.begin(115200);
+  delay(1000); //Take some time to open up the Serial Monitor
+
   esp_sleep_wakeup_cause_t wakeup_reason;
   wakeup_reason = esp_sleep_get_wakeup_cause();
-  if (wakeup_reason == ESP_SLEEP_WAKEUP_EXT0) {
+  print_wakeup_reason(wakeup_reason);
+
+  if (wakeup_reason == 0) {
+    Serial.println("First run: initialize ccs");
+    initialize_sensors(true);
+  }
+  else if (wakeup_reason == ESP_SLEEP_WAKEUP_EXT0) {
     idx_display = (idx_display + 1) % (2 + 4); // off screen off, ccs and 4 dhts 
     Serial.println("Changing screen to " + String(idx_display));
-    display_screen();
+    if (idx_display == 0) {
+      off_screen();
+    } else {
+      display_screen();
+    }
   }
   else {
     error_led = false;
     idx_reading += 1;
     Serial.println("Reading sensor idx " + String(idx_reading));
-    bool initializeCCS = (wakeup_reason != ESP_SLEEP_WAKEUP_TIMER);
-    Serial.println("Reading sensors");
-
-    Serial.begin(115200);
-    Serial.flush();
-    initialize_sensors(initializeCCS);
-    delay(5000);
-
+    initialize_sensors(false);
     read_sensors();
     display_screen();
   }
@@ -245,7 +270,6 @@ void setup(){
 
   // shutdown_rf();
   Serial.println("Going to sleep now for " + String(TIME_TO_SLEEP) + "s");
-  Serial.flush();
   esp_deep_sleep_start();
 }
 
