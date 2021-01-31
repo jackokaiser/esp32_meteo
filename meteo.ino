@@ -1,3 +1,8 @@
+#define DEBUG false  //set to true for debug output, false for no debug ouput
+#define Serial if(DEBUG)Serial
+
+#include <FS.h>
+#include <SD.h>
 #include <SPI.h>
 #include <Wire.h>
 #include <Adafruit_GFX.h>
@@ -10,6 +15,9 @@
 #include <esp_deep_sleep.h>
 #include <esp_wifi.h>
 #include <esp_bt.h>
+
+// Define CS pin for the SD card module
+#define SD_CS 5
 
 #define SCREEN_WIDTH 128 // OLED display width, in pixels
 #define SCREEN_HEIGHT 64 // OLED display height, in pixels
@@ -100,6 +108,39 @@ void initialize(bool initializeCCS) {
   
   display.setFont(&FreeMono9pt7b);
   display.setTextColor(WHITE);
+  if (!initialize_sd_card()) {
+    Serial.println("Failed to initialize SD card");
+  }
+}
+
+bool initialize_sd_card () {
+  if(!SD.begin(SD_CS)) {
+    Serial.println("Card Mount Failed");
+    return false;
+  }
+  
+  uint8_t cardType = SD.cardType();
+  if(cardType == CARD_NONE) {
+    Serial.println("No SD card attached");
+    return false;
+  }
+
+  String dataString = String(meteo.dhts[0].temperature, 2) + "," + String(meteo.dhts[0].humidity, 2);
+
+  if (!SD.exists("/data.csv")) {
+    Serial.println("File already exists");  
+  }
+
+
+  File file = SD.open("/data.csv", FILE_WRITE);
+  if(file) {
+    file.println("co2, tvoc, temp_room, hum_room, temp_wall, hum_wall, temp_ext, hum_ext, temp_ceiling, hum_ceiling");
+  }
+  else {
+    Serial.println("Couldn't open file");  
+  }
+  file.close();
+  return true;
 }
 
 void read_sensors() {
