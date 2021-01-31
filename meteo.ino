@@ -88,17 +88,20 @@ void initialize_sensors(bool initializeCCS) {
   }
 
   if (initializeCCS) {
-    Serial.println("initializing CCS!");
-    ccs.set_i2cdelay(50); // Needed for ESP8266 because it doesn't handle I2C clock stretch correctly
-    if(!ccs.begin()) {
-      error_led = true;
-      Serial.println("CCS881: Failed to begin");
-    } 
+    initialize_ccs();
+  }
+}
 
-    if (!ccs.start(CCS_MODE)) {
-      error_led = true;
-      Serial.println("CCS881: Failed to start sensing");
-    }
+void initialize_ccs() {
+  Serial.println("initializing CCS!");
+  ccs.set_i2cdelay(50); // Needed for ESP8266 because it doesn't handle I2C clock stretch correctly
+  if(!ccs.begin()) {
+    error_led = true;
+    Serial.println("CCS881: Failed to begin");
+  } 
+  if (!ccs.start(CCS_MODE)) {
+    error_led = true;
+    Serial.println("CCS881: Failed to start sensing");
   }
 }
 
@@ -165,6 +168,7 @@ void read_sensors() {
     Serial.println("CCS waiting for new data");
   } else if (errstat & CCS811_ERRSTAT_I2CFAIL) {
     Serial.println("CCS i2c error");
+    initialize_ccs();
     error_led = true;
   } else if (errstat != CCS811_ERRSTAT_OK) {
     Serial.println("CCS unknown error");
@@ -221,6 +225,7 @@ void setup(){
     display_screen();
   }
   else {
+    error_led = false;
     idx_reading += 1;
     Serial.println("Reading sensor idx " + String(idx_reading));
     bool initializeCCS = (wakeup_reason != ESP_SLEEP_WAKEUP_TIMER);
