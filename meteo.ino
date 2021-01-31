@@ -94,6 +94,11 @@ void initialize_ccs() {
     error_led = true;
     Serial.println("CCS881: Failed to begin");
   } 
+  // Print CCS811 versions
+  Serial.print("setup: hardware    version: "); Serial.println(ccs.hardware_version(),HEX);
+  Serial.print("setup: bootloader  version: "); Serial.println(ccs.bootloader_version(),HEX);
+  Serial.print("setup: application version: "); Serial.println(ccs.application_version(),HEX);
+
   if (!ccs.start(CCS_MODE)) {
     error_led = true;
     Serial.println("CCS881: Failed to start sensing");
@@ -246,6 +251,9 @@ void setup(){
   if (wakeup_reason == 0) {
     Serial.println("First run: initialize ccs");
     initialize_sensors(true);
+
+    delay(5000);
+    read_sensors();
   }
   else if (wakeup_reason == ESP_SLEEP_WAKEUP_EXT0) {
     idx_display = (idx_display + 1) % (2 + 4); // off screen off, ccs and 4 dhts 
@@ -261,6 +269,7 @@ void setup(){
     idx_reading += 1;
     Serial.println("Reading sensor idx " + String(idx_reading));
     initialize_sensors(false);
+    delay(5000);
     read_sensors();
     display_screen();
   }
