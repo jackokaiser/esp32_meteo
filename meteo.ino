@@ -82,14 +82,16 @@ String dht_locations [N_DHTS] = {
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 CCS811 ccs;
 
-void initialize(bool initializeCCS) {
+bool initialize(bool initializeCCS) {
+  bool success = true;
   for (int i=0; i<N_DHTS; ++i) {
     dhts[i].begin();
   }
   initialize_screen();
   if (initializeCCS) {
-    initialize_ccs();
+    success = success && initialize_ccs();
   }
+  return success;
 }
 
 void initialize_screen() {
@@ -98,12 +100,13 @@ void initialize_screen() {
   }
 }
 
-void initialize_ccs() {
+bool initialize_ccs() {
+  bool success = true;
   Serial.println("initializing CCS!");
   ccs.set_i2cdelay(50); // Needed for ESP8266 because it doesn't handle I2C clock stretch correctly
   if(!ccs.begin()) {
-    error_led = true;
     Serial.println("CCS881: Failed to begin");
+    success = false;
   } 
   // Print CCS811 versions
   Serial.print("setup: hardware    version: "); Serial.println(ccs.hardware_version(),HEX);
@@ -111,40 +114,39 @@ void initialize_ccs() {
   Serial.print("setup: application version: "); Serial.println(ccs.application_version(),HEX);
 
   if (!ccs.start(CCS_MODE)) {
-    error_led = true;
     Serial.println("CCS881: Failed to start sensing");
+    success = false;
   }
+  return success;
 }
 
 bool initialize_sd_card () {
   if(!SD.begin(SD_CS)) {
-    error_led = true;
     Serial.println("Card Mount Failed");
     return false;
-  }
+ }
   
   uint8_t cardType = SD.cardType();
   if(cardType == CARD_NONE) {
-    error_led = true;
     Serial.println("No SD card attached");
     return false;
   }
+  return true;
 }
 
-bool log_sd_card(String filename) {
-  String writeString = "";
-  if (!SD.exists(filename)) {
-    Serial.println("File does not exists yet, adding headers"); 
-    writeString += String("co2, tvoc, temp_room, hum_room, temp_wall, hum_wall, temp_ext, hum_ext, temp_ceiling, hum_ceiling\n");
-  }
+bool log_sd_card() {
+  timeval now;
+  gettimeofday(&now, NULL);
+  String filename = String(now.tv_sec) + ".csv";
+  
+  String writeString = String("co2, tvoc, temp_room, hum_room, temp_wall, hum_wall, temp_ext, hum_ext, temp_ceiling, hum_ceiling\n");
   for (uint16_t ii = 0; ii < LOG_SD_CARD_INTERVAL; ii++) {
     writeString += format_meteo_data(&(meteo[ii]));
   }
 
   File file = SD.open(filename, FILE_WRITE);
   if(!file) {
-    error_led = true;
-    Serial.println("Couldn't open file");  
+    Serial.println("Couldn't open file "+filename);  
     return false;
   }
   file.print(writeString);
@@ -161,15 +163,15 @@ String format_meteo_data(const meteo_data *data) {
   return ret;
 }
 
-void read_sensors() {
+bool read_sensors() {
   meteo_data *data = &(meteo[idx_reading]);
-
+  bool success = true;
   for (int i=0; i<N_DHTS; ++i) {
     data->dhts[i].temperature = dhts[i].readTemperature();
     data->dhts[i].humidity = dhts[i].readHumidity();
     if (isnan(data->dhts[i].temperature)) {
-      error_led = true;
       Serial.println("DHT error on idx " + String(i));
+      success = false;
     }
   }
 
@@ -179,11 +181,12 @@ void read_sensors() {
     Serial.println("CCS waiting for new data");
   } else if (errstat & CCS811_ERRSTAT_I2CFAIL) {
     Serial.println("CCS i2c error");
-    error_led = true;
+    success = false;
   } else if (errstat != CCS811_ERRSTAT_OK) {
     Serial.println("CCS unknown error");
-    error_led = true;
+    success = false;
   }
+  return success;
 }
 
 bool display_screen() {
@@ -255,6 +258,7 @@ void setup(){
       Serial.println("Changing screen to " + String(idx_display));
       if (idx_display == 0) {
         display.clearDisplay();
+        display.display();
       } else {
         display_screen();
       }
@@ -263,11 +267,20 @@ void setup(){
     sleep_duration = (TIME_TO_SLEEP - diff.tv_sec) * S_TO_uS_FACTOR + diff.tv_usec;
   }
   else {
-    error_led = false;
+    error_led = initialize_sd_card(); // light up if no sd card at any time
+    
     idx_reading += 1;
-    initialize(wakeup_reason == 0);
+    if (idx_reading == LOG_SD_CARD_INTERVAL) {
+      bool save_success = log_sd_card();
+      error_led = error_led && save_success;
+      idx_reading = 0;
+    }
+    bool init_success = initialize(wakeup_reason == 0);
     Serial.println("Reading sensor idx " + String(idx_reading));
-    read_sensors();
+    bool read_success = read_sensors();
+    
+    error_led = error_led && init_success && read_success;
+    
     display_screen();
     gettimeofday(&sleep_start, NULL);
   }
