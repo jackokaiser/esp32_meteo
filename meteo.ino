@@ -25,8 +25,8 @@
 
 #define uS_TO_S_FACTOR 1000000  /* Conversion factor for micro seconds to seconds */
 #define TIME_TO_SLEEP  15        /* Time ESP32 will go to sleep (in seconds) */
-#define CCS_MODE CCS811_MODE_10SEC  /* 1s, 10s, 60s*/   
-#define LOG_INTERVAL 72 /* number of measures before saving in SD card */
+#define CCS_MODE CCS811_MODE_10SEC  /* 1s, 10s, 60s*/
+#define LOG_SD_CARD_INTERVAL 72 /* number of measures before saving in SD card */
 
 typedef struct {
     float temperature;
@@ -44,7 +44,7 @@ typedef struct {
 } meteo_data;
 
 
-RTC_DATA_ATTR meteo_data meteo[LOG_INTERVAL];
+RTC_DATA_ATTR meteo_data meteo[LOG_SD_CARD_INTERVAL];
 RTC_DATA_ATTR uint16_t idx_display = 1;
 RTC_DATA_ATTR uint16_t idx_reading = 0;
 
@@ -75,12 +75,18 @@ String dht_locations [N_DHTS] = {
   "Ceiling"
 };
 
+// D1 mini default IO21=SDA, IO22=SCL
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 CCS811 ccs;
 
 void initialize_sensors(bool initializeCCS) {
   for (int i=0; i<N_DHTS; ++i) {
     dhts[i].begin();
   }
+  if(!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) { // Address 0x3D for 128x64
+    Serial.println("SSD1306 allocation failed");
+  }
+
 
   if (initializeCCS) {
     initialize_ccs();
@@ -126,7 +132,7 @@ bool log_sd_card(String filename) {
     Serial.println("File does not exists yet, adding headers"); 
     writeString += String("co2, tvoc, temp_room, hum_room, temp_wall, hum_wall, temp_ext, hum_ext, temp_ceiling, hum_ceiling\n");
   }
-  for (uint16_t ii = 0; ii < LOG_INTERVAL; ii++) {
+  for (uint16_t ii = 0; ii < LOG_SD_CARD_INTERVAL; ii++) {
     writeString += format_meteo_data(&(meteo[ii]));
   }
 
@@ -175,29 +181,11 @@ void read_sensors() {
   }
 }
 
-bool off_screen() {
-  Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
-  
-  if(!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) { // Address 0x3D for 128x64
-    error_led = true;
-    Serial.println("SSD1306 allocation failed");
-  }
-  display.clearDisplay();
-}
-
-
 bool display_screen() {
   if (idx_display == 0) {
     return true;
   }
-  
-  Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
-  
-  if(!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) { // Address 0x3D for 128x64
-    error_led = true;
-    Serial.println("SSD1306 allocation failed");
-  }
-  
+
   display.setFont(&FreeMono9pt7b);
   display.setTextColor(WHITE);
   display.clearDisplay();
@@ -259,7 +247,7 @@ void setup(){
     idx_display = (idx_display + 1) % (2 + 4); // off screen off, ccs and 4 dhts 
     Serial.println("Changing screen to " + String(idx_display));
     if (idx_display == 0) {
-      off_screen();
+      display.clearDisplay();
     } else {
       display_screen();
     }
