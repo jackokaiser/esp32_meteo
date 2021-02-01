@@ -1,3 +1,4 @@
+#include <sys/time.h>
 #define DEBUG true  //set to true for debug output, false for no debug ouput
 #define Serial if(DEBUG)Serial
 
@@ -23,7 +24,7 @@
 #define SCREEN_HEIGHT 64 // OLED display height, in pixels
 #define OLED_RESET     -1 // Reset pin # (or -1 if sharing Arduino reset pin)
 
-#define uS_TO_S_FACTOR 1000000  /* Conversion factor for micro seconds to seconds */
+#define S_TO_uS_FACTOR 1000000  /* Conversion factor from second to micro seconds */
 #define TIME_TO_SLEEP  15        /* Time ESP32 will go to sleep (in seconds) */
 #define CCS_MODE CCS811_MODE_10SEC  /* 1s, 10s, 60s*/
 #define LOG_SD_CARD_INTERVAL 72 /* number of measures before saving in SD card */
@@ -46,9 +47,11 @@ typedef struct {
 
 RTC_DATA_ATTR meteo_data meteo[LOG_SD_CARD_INTERVAL];
 RTC_DATA_ATTR uint16_t idx_display = 1;
-RTC_DATA_ATTR uint16_t idx_reading = 0;
+RTC_DATA_ATTR uint16_t idx_reading = -1;
 
 RTC_DATA_ATTR bool error_led = false;
+RTC_DATA_ATTR timeval sleep_start;
+RTC_DATA_ATTR timeval last_btn_push;
 
 #define DHT_ROOM_PIN 16
 #define DHT_WALL_PIN 17
@@ -79,17 +82,19 @@ String dht_locations [N_DHTS] = {
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 CCS811 ccs;
 
-void initialize_sensors(bool initializeCCS) {
+void initialize(bool initializeCCS) {
   for (int i=0; i<N_DHTS; ++i) {
     dhts[i].begin();
   }
-  if(!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) { // Address 0x3D for 128x64
-    Serial.println("SSD1306 allocation failed");
-  }
-
-
+  initialize_screen();
   if (initializeCCS) {
     initialize_ccs();
+  }
+}
+
+void initialize_screen() {
+  if(!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) { // Address 0x3D for 128x64
+    Serial.println("SSD1306 allocation failed");
   }
 }
 
@@ -230,43 +235,48 @@ void print_wakeup_reason(esp_sleep_wakeup_cause_t wakeup_reason) {
 
 void setup(){
   Serial.begin(115200);
-  delay(1000); //Take some time to open up the Serial Monitor
+  // delay(1000); //Take some time to open up the Serial Monitor
 
   esp_sleep_wakeup_cause_t wakeup_reason;
   wakeup_reason = esp_sleep_get_wakeup_cause();
   print_wakeup_reason(wakeup_reason);
 
-  if (wakeup_reason == 0) {
-    Serial.println("First run: initialize ccs");
-    initialize_sensors(true);
-
-    delay(5000);
-    read_sensors();
-  }
-  else if (wakeup_reason == ESP_SLEEP_WAKEUP_EXT0) {
-    idx_display = (idx_display + 1) % (2 + 4); // off screen off, ccs and 4 dhts 
-    Serial.println("Changing screen to " + String(idx_display));
-    if (idx_display == 0) {
-      display.clearDisplay();
-    } else {
-      display_screen();
+  uint64_t sleep_duration = TIME_TO_SLEEP * S_TO_uS_FACTOR;
+  if (wakeup_reason == ESP_SLEEP_WAKEUP_EXT0) {
+    timeval now, diff;
+    gettimeofday(&now, NULL);
+    timersub(&now,&last_btn_push,&diff); 
+    // throttle button push
+    if (diff.tv_sec > 1 || (diff.tv_usec / 1000) > 500) {
+      // last button push is old enough
+      gettimeofday(&last_btn_push, NULL);
+      initialize_screen();
+      idx_display = (idx_display + 1) % (2 + 4); // off screen off, ccs and 4 dhts 
+      Serial.println("Changing screen to " + String(idx_display));
+      if (idx_display == 0) {
+        display.clearDisplay();
+      } else {
+        display_screen();
+      }
     }
+    timersub(&now,&sleep_start,&diff); 
+    sleep_duration = (TIME_TO_SLEEP - diff.tv_sec) * S_TO_uS_FACTOR + diff.tv_usec;
   }
   else {
     error_led = false;
     idx_reading += 1;
+    initialize(wakeup_reason == 0);
     Serial.println("Reading sensor idx " + String(idx_reading));
-    initialize_sensors(false);
-    delay(5000);
     read_sensors();
     display_screen();
+    gettimeofday(&sleep_start, NULL);
   }
 
-  esp_sleep_enable_timer_wakeup(TIME_TO_SLEEP * uS_TO_S_FACTOR);
   esp_sleep_enable_ext0_wakeup(GPIO_NUM_27, 1);
+  esp_sleep_enable_timer_wakeup(sleep_duration);
 
   // shutdown_rf();
-  Serial.println("Going to sleep now for " + String(TIME_TO_SLEEP) + "s");
+  Serial.println("Going to sleep now for " + String(double(sleep_duration) / S_TO_uS_FACTOR, 0) + "s");
   esp_deep_sleep_start();
 }
 
