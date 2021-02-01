@@ -137,7 +137,7 @@ bool initialize_sd_card () {
 bool log_sd_card() {
   timeval now;
   gettimeofday(&now, NULL);
-  String filename = String(now.tv_sec) + ".csv";
+  String filename = "/" + String(now.tv_sec) + ".csv";
   
   String writeString = String("co2, tvoc, temp_room, hum_room, temp_wall, hum_wall, temp_ext, hum_ext, temp_ceiling, hum_ceiling\n");
   for (uint16_t ii = 0; ii < LOG_SD_CARD_INTERVAL; ii++) {
@@ -150,6 +150,8 @@ bool log_sd_card() {
     return false;
   }
   file.print(writeString);
+  Serial.println("Wrote data to " + filename);
+
   file.close();
   return true;
 }
@@ -267,7 +269,8 @@ void setup(){
     sleep_duration = (TIME_TO_SLEEP - diff.tv_sec) * S_TO_uS_FACTOR + diff.tv_usec;
   }
   else {
-    error_led = initialize_sd_card(); // light up if no sd card at any time
+    bool sd_card_success = initialize_sd_card(); // light up if no sd card at any time
+    bool save_success = true;
     
     idx_reading += 1;
     if (idx_reading == LOG_SD_CARD_INTERVAL) {
@@ -279,7 +282,7 @@ void setup(){
     Serial.println("Reading sensor idx " + String(idx_reading));
     bool read_success = read_sensors();
     
-    error_led = error_led && init_success && read_success;
+    error_led = sd_card_success && save_success && init_success && read_success;
     
     display_screen();
     gettimeofday(&sleep_start, NULL);
