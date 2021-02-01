@@ -1,4 +1,7 @@
 #include <sys/time.h>
+#include <WiFi.h>
+#include "time.h"
+
 #define DEBUG true  //set to true for debug output, false for no debug ouput
 #define Serial if(DEBUG)Serial
 
@@ -16,6 +19,8 @@
 #include <esp_deep_sleep.h>
 #include <esp_wifi.h>
 #include <esp_bt.h>
+
+#include "wifiCredentials.h"
 
 // Define CS pin for the SD card module
 #define SD_CS 5
@@ -238,6 +243,39 @@ void print_wakeup_reason(esp_sleep_wakeup_cause_t wakeup_reason) {
   Serial.flush();
 }
 
+bool sync_time() {
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  for (uint8_t trials = 0; 
+      (WiFi.status() != WL_CONNECTED) && (trials < 10);
+      trials++) {
+      delay(1000);
+      Serial.print(".");
+  }
+  Serial.flush();;
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("failed to connect to wifi - not syncing time");
+    return false;
+  }
+  Serial.println("connected to wifi");
+  const long gmtOffset_sec = 3600;
+  const int daylightOffset_sec = 0;
+  configTime(gmtOffset_sec, daylightOffset_sec, "pool.ntp.org");
+  printLocalTime();
+  WiFi.disconnect(true);
+  WiFi.mode(WIFI_OFF);
+}
+
+void printLocalTime()
+{
+  struct tm timeinfo;
+  if(!getLocalTime(&timeinfo)){
+    Serial.println("Failed to obtain time");
+    return;
+  }
+  Serial.println(&timeinfo, "%A, %B %d %Y %H:%M:%S");
+}
+
+
 void setup(){
   Serial.begin(115200);
   // delay(1000); //Take some time to open up the Serial Monitor
@@ -277,6 +315,9 @@ void setup(){
       bool save_success = log_sd_card();
       error_led = error_led && save_success;
       idx_reading = 0;
+    }
+    if (idx_reading == 0) {
+      sync_time();
     }
     bool init_success = initialize(wakeup_reason == 0);
     Serial.println("Reading sensor idx " + String(idx_reading));
