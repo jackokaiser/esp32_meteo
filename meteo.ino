@@ -24,6 +24,7 @@
 
 // Define CS pin for the SD card module
 #define SD_CS 5
+#define ERROR_LED GPIO_NUM_2
 
 #define SCREEN_WIDTH 128 // OLED display width, in pixels
 #define SCREEN_HEIGHT 64 // OLED display height, in pixels
@@ -48,7 +49,6 @@ typedef struct {
     dht_data dhts[4];
     ccs_data ccs;
 } meteo_data;
-
 
 RTC_DATA_ATTR meteo_data meteo[LOG_SD_CARD_INTERVAL];
 RTC_DATA_ATTR uint16_t idx_display = 1;
@@ -243,15 +243,20 @@ void print_wakeup_reason(esp_sleep_wakeup_cause_t wakeup_reason) {
   Serial.flush();
 }
 
-bool sync_time() {
+bool sync_time(bool blink_led) {
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  bool led = false;
   for (uint8_t trials = 0; 
       (WiFi.status() != WL_CONNECTED) && (trials < 10);
       trials++) {
       delay(1000);
+      if (blink_led) {
+        led = !led;
+        digitalWrite(ERROR_LED, led); 
+      }
       Serial.print(".");
   }
-  Serial.flush();;
+  Serial.flush();
   if (WiFi.status() != WL_CONNECTED) {
     Serial.println("failed to connect to wifi - not syncing time");
     return false;
@@ -278,7 +283,9 @@ void printLocalTime()
 
 void setup(){
   Serial.begin(115200);
-  // delay(1000); //Take some time to open up the Serial Monitor
+  // delay(1000); //Take some times to open up the Serial Monitor
+
+  pinMode(ERROR_LED, OUTPUT);
 
   esp_sleep_wakeup_cause_t wakeup_reason;
   wakeup_reason = esp_sleep_get_wakeup_cause();
@@ -317,17 +324,20 @@ void setup(){
       idx_reading = 0;
     }
     if (idx_reading == 0) {
-      sync_time();
+      sync_time(wakeup_reason == 0);
     }
     bool init_success = initialize(wakeup_reason == 0);
     Serial.println("Reading sensor idx " + String(idx_reading));
     bool read_success = read_sensors();
     
-    error_led = sd_card_success && save_success && init_success && read_success;
+    error_led = !(sd_carsd_success && save_success && init_success && read_success);
     
     display_screen();
     gettimeofday(&sleep_start, NULL);
   }
+
+  digitalWrite(ERROR_LED, error_led); 
+  gpio_hold_en(ERROR_LED);
 
   esp_sleep_enable_ext0_wakeup(GPIO_NUM_27, 1);
   esp_sleep_enable_timer_wakeup(sleep_duration);
