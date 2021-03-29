@@ -16,7 +16,7 @@
 #include <Fonts/FreeMono9pt7b.h>
 
 #include <DHT.h>
-#include <esp_deep_sleep.h>
+#include <esp_sleep.h>
 #include <esp_wifi.h>
 #include <esp_bt.h>
 
@@ -87,18 +87,6 @@ String dht_locations [N_DHTS] = {
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 CCS811 ccs;
 
-bool initialize(bool initializeCCS) {
-  bool success = true;
-  for (int i=0; i<N_DHTS; ++i) {
-    dhts[i].begin();
-  }
-  initialize_screen();
-  if (initializeCCS) {
-    success = success && initialize_ccs();
-  }
-  return success;
-}
-
 void initialize_screen() {
   if(!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) { // Address 0x3D for 128x64
     Serial.println("SSD1306 allocation failed");
@@ -112,7 +100,7 @@ bool initialize_ccs() {
   if(!ccs.begin()) {
     Serial.println("CCS881: Failed to begin");
     success = false;
-  } 
+  }
   // Print CCS811 versions
   Serial.print("setup: hardware    version: "); Serial.println(ccs.hardware_version(),HEX);
   Serial.print("setup: bootloader  version: "); Serial.println(ccs.bootloader_version(),HEX);
@@ -130,7 +118,7 @@ bool initialize_sd_card () {
     Serial.println("Card Mount Failed");
     return false;
  }
-  
+
   uint8_t cardType = SD.cardType();
   if(cardType == CARD_NONE) {
     Serial.println("No SD card attached");
@@ -139,26 +127,16 @@ bool initialize_sd_card () {
   return true;
 }
 
-bool log_sd_card() {
-  timeval now;
-  gettimeofday(&now, NULL);
-  String filename = "/" + String(now.tv_sec) + ".csv";
-  
-  String writeString = String("co2, tvoc, temp_room, hum_room, temp_wall, hum_wall, temp_ext, hum_ext, temp_ceiling, hum_ceiling\n");
-  for (uint16_t ii = 0; ii < LOG_SD_CARD_INTERVAL; ii++) {
-    writeString += format_meteo_data(&(meteo[ii]));
+bool initialize(bool initializeCCS) {
+  bool success = true;
+  for (int i=0; i<N_DHTS; ++i) {
+    dhts[i].begin();
   }
-
-  File file = SD.open(filename, FILE_WRITE);
-  if(!file) {
-    Serial.println("Couldn't open file "+filename);  
-    return false;
+  initialize_screen();
+  if (initializeCCS) {
+    success = success && initialize_ccs();
   }
-  file.print(writeString);
-  Serial.println("Wrote data to " + filename);
-
-  file.close();
-  return true;
+  return success;
 }
 
 String format_meteo_data(const meteo_data *data) {
@@ -168,6 +146,29 @@ String format_meteo_data(const meteo_data *data) {
   }
   ret += "\n";
   return ret;
+}
+
+
+bool log_sd_card() {
+  timeval now;
+  gettimeofday(&now, NULL);
+  String filename = "/" + String(now.tv_sec) + ".csv";
+
+  String writeString = String("co2, tvoc, temp_room, hum_room, temp_wall, hum_wall, temp_ext, hum_ext, temp_ceiling, hum_ceiling\n");
+  for (uint16_t ii = 0; ii < LOG_SD_CARD_INTERVAL; ii++) {
+    writeString += format_meteo_data(&(meteo[ii]));
+  }
+
+  File file = SD.open(filename, FILE_WRITE);
+  if(!file) {
+    Serial.println("Couldn't open file "+filename);
+    return false;
+  }
+  file.print(writeString);
+  Serial.println("Wrote data to " + filename);
+
+  file.close();
+  return true;
 }
 
 bool read_sensors() {
@@ -196,9 +197,9 @@ bool read_sensors() {
   return success;
 }
 
-bool display_screen() {
+void display_screen() {
   if (idx_display == 0) {
-    return true;
+    return;
   }
 
   display.setFont(&FreeMono9pt7b);
@@ -213,7 +214,7 @@ bool display_screen() {
     display.print("ppm\n");
     display.print("VOC ");
     display.print(data.ccs.TVOC);
-    display.print("ppb\n");  
+    display.print("ppb\n");
   }
   else {
     uint8_t i_dht = idx_display - 2;
@@ -224,7 +225,7 @@ bool display_screen() {
     display.print("c\n");
     display.print("Hum  ");
     display.print(cur_dht.humidity, 1);
-    display.print("%\n");    
+    display.print("%\n");
   }
   display.display();
 }
@@ -243,33 +244,6 @@ void print_wakeup_reason(esp_sleep_wakeup_cause_t wakeup_reason) {
   Serial.flush();
 }
 
-bool sync_time(bool blink_led) {
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-  bool led = false;
-  for (uint8_t trials = 0; 
-      (WiFi.status() != WL_CONNECTED) && (trials < 10);
-      trials++) {
-      delay(1000);
-      if (blink_led) {
-        led = !led;
-        digitalWrite(ERROR_LED, led); 
-      }
-      Serial.print(".");
-  }
-  Serial.flush();
-  if (WiFi.status() != WL_CONNECTED) {
-    Serial.println("failed to connect to wifi - not syncing time");
-    return false;
-  }
-  Serial.println("connected to wifi");
-  const long gmtOffset_sec = 3600;
-  const int daylightOffset_sec = 0;
-  configTime(gmtOffset_sec, daylightOffset_sec, "pool.ntp.org");
-  printLocalTime();
-  WiFi.disconnect(true);
-  WiFi.mode(WIFI_OFF);
-}
-
 void printLocalTime()
 {
   struct tm timeinfo;
@@ -280,6 +254,31 @@ void printLocalTime()
   Serial.println(&timeinfo, "%A, %B %d %Y %H:%M:%S");
 }
 
+void sync_time(bool blink_led) {
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  bool led = false;
+  for (uint8_t trials = 0;
+      (WiFi.status() != WL_CONNECTED) && (trials < 10);
+      trials++) {
+      delay(1000);
+      if (blink_led) {
+        led = !led;
+        digitalWrite(ERROR_LED, led);
+      }
+      Serial.print(".");
+  }
+  Serial.flush();
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("failed to connect to wifi - not syncing time");
+    return;
+  }
+  Serial.println("connected to wifi");
+  const long gmtOffset_sec = 3600;
+  const int daylightOffset_sec = 0;
+  configTime(gmtOffset_sec, daylightOffset_sec, "pool.ntp.org");
+  printLocalTime();
+  WiFi.disconnect();
+}
 
 void setup(){
   Serial.begin(115200);
@@ -295,13 +294,13 @@ void setup(){
   if (wakeup_reason == ESP_SLEEP_WAKEUP_EXT0) {
     timeval now, diff;
     gettimeofday(&now, NULL);
-    timersub(&now,&last_btn_push,&diff); 
+    timersub(&now,&last_btn_push,&diff);
     // throttle button push
     if (diff.tv_sec > 1 || (diff.tv_usec / 1000) > 500) {
       // last button push is old enough
       gettimeofday(&last_btn_push, NULL);
       initialize_screen();
-      idx_display = (idx_display + 1) % (2 + 4); // off screen off, ccs and 4 dhts 
+      idx_display = (idx_display + 1) % (2 + 4); // off screen off, ccs and 4 dhts
       Serial.println("Changing screen to " + String(idx_display));
       if (idx_display == 0) {
         display.clearDisplay();
@@ -310,13 +309,13 @@ void setup(){
         display_screen();
       }
     }
-    timersub(&now,&sleep_start,&diff); 
+    timersub(&now,&sleep_start,&diff);
     sleep_duration = (TIME_TO_SLEEP - diff.tv_sec) * S_TO_uS_FACTOR + diff.tv_usec;
   }
   else {
     bool sd_card_success = initialize_sd_card(); // light up if no sd card at any time
     bool save_success = true;
-    
+
     idx_reading += 1;
     if (idx_reading == LOG_SD_CARD_INTERVAL) {
       bool save_success = log_sd_card();
@@ -329,14 +328,14 @@ void setup(){
     bool init_success = initialize(wakeup_reason == 0);
     Serial.println("Reading sensor idx " + String(idx_reading));
     bool read_success = read_sensors();
-    
-    error_led = !(sd_carsd_success && save_success && init_success && read_success);
-    
+
+    error_led = !(sd_card_success && save_success && init_success && read_success);
+
     display_screen();
     gettimeofday(&sleep_start, NULL);
   }
 
-  digitalWrite(ERROR_LED, error_led); 
+  digitalWrite(ERROR_LED, error_led);
   gpio_hold_en(ERROR_LED);
 
   esp_sleep_enable_ext0_wakeup(GPIO_NUM_27, 1);
