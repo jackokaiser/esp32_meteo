@@ -274,7 +274,7 @@ void sync_time(bool blink_led) {
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
   bool led = false;
   for (uint8_t trials = 0;
-      (WiFi.status() != WL_CONNECTED) && (trials < 50);
+      (WiFi.status() != WL_CONNECTED) && (trials < 10);
       trials++) {
       delay(1000);
       if (blink_led) {
