@@ -57,6 +57,8 @@ RTC_DATA_ATTR uint16_t idx_reading = -1;
 RTC_DATA_ATTR bool error_led = false;
 RTC_DATA_ATTR timeval sleep_start;
 RTC_DATA_ATTR timeval last_btn_push;
+RTC_DATA_ATTR timeval last_ntp_sync;
+RTC_DATA_ATTR bool is_ntp_sync = false;
 
 #define DHT_ROOM_PIN 16
 #define DHT_WALL_PIN 17
@@ -197,18 +199,32 @@ bool read_sensors() {
   return success;
 }
 
+void display_warning(int tx, int ty) {
+  int w = 8;
+  int h = 12;
+  display.fillTriangle(tx - w, ty + h,
+                       tx, ty,
+                       tx + w, ty + h, WHITE);
+}
+
 void display_screen() {
   if (idx_display == 0) {
     return;
   }
-
   display.setFont(&FreeMono9pt7b);
   display.setTextColor(WHITE);
   display.clearDisplay();
+
+  if (!is_ntp_sync) {
+    display_warning(
+        display.width() - 10,
+        0);
+  }
+
   display.setCursor(0,20);
   meteo_data data = meteo[idx_reading];
   if (idx_display == 1) {
-    display.println("Air quality ");
+    display.println("Particles ");
     display.print("CO2 ");
     display.print(data.ccs.eCO2);
     display.print("ppm\n");
@@ -258,7 +274,7 @@ void sync_time(bool blink_led) {
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
   bool led = false;
   for (uint8_t trials = 0;
-      (WiFi.status() != WL_CONNECTED) && (trials < 10);
+      (WiFi.status() != WL_CONNECTED) && (trials < 50);
       trials++) {
       delay(1000);
       if (blink_led) {
@@ -269,13 +285,18 @@ void sync_time(bool blink_led) {
   }
   Serial.flush();
   if (WiFi.status() != WL_CONNECTED) {
-    Serial.println("failed to connect to wifi - not syncing time");
+    Serial.println("failed to connect to wifi:");
+    Serial.println(WIFI_SSID);
+    Serial.println(WIFI_PASSWORD);
+    Serial.println("not syncing time");
     return;
   }
   Serial.println("connected to wifi");
   const long gmtOffset_sec = 3600;
-  const int daylightOffset_sec = 0;
-  configTime(gmtOffset_sec, daylightOffset_sec, "pool.ntp.org");
+  const int daylightOffset_sec = 3600;
+  configTime(gmtOffset_sec, daylightOffset_sec, "fr.pool.ntp.org", "time.nist.gov", "time.windows.com");
+  gettimeofday(&last_ntp_sync, NULL);
+  is_ntp_sync = true;
   printLocalTime();
   WiFi.disconnect();
 }
