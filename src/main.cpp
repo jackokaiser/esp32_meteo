@@ -59,6 +59,7 @@ RTC_DATA_ATTR timeval sleep_start;
 RTC_DATA_ATTR timeval last_btn_push;
 RTC_DATA_ATTR timeval last_ntp_sync;
 RTC_DATA_ATTR bool is_ntp_sync = false;
+RTC_DATA_ATTR int nosync_idx = -1;
 
 #define DHT_ROOM_PIN 16
 #define DHT_WALL_PIN 17
@@ -150,11 +151,38 @@ String format_meteo_data(const meteo_data *data) {
   return ret;
 }
 
+int get_nosync_index() {
+  int max_idx = 0;
+  File root = SD.open("/");
+  while (true) {
+    File entry =  root.openNextFile();
+    if (!entry) {
+      // no more files
+      break;
+    }
+    String name = entry.name();
+    if (!entry.isDirectory() && name.startsWith("/nosync_")) {
+      int idx = name.substring(8).toInt();
+      if (idx > max_idx) {
+        max_idx = idx;
+      }
+    }
+    entry.close();
+  }
+  root.close();
+  return max_idx + 1;
+}
 
 bool log_sd_card() {
   timeval now;
   gettimeofday(&now, NULL);
-  String filename = "/" + String(now.tv_sec) + ".csv";
+  String prefix;
+  if (is_ntp_sync) {
+    prefix = "sync_";
+  } else {
+    prefix = "nosync_" + String(nosync_idx) + "_";
+  }
+  String filename = "/" + prefix + String(now.tv_sec) + ".csv";
 
   String writeString = String("co2, tvoc, temp_room, hum_room, temp_wall, hum_wall, temp_ext, hum_ext, temp_ceiling, hum_ceiling\n");
   for (uint16_t ii = 0; ii < LOG_SD_CARD_INTERVAL; ii++) {
@@ -288,7 +316,11 @@ void sync_time(bool blink_led) {
     Serial.println("failed to connect to wifi:");
     Serial.println(WIFI_SSID);
     Serial.println(WIFI_PASSWORD);
-    Serial.println("not syncing time");
+    if (nosync_idx == -1) {
+      nosync_idx = get_nosync_index();
+      Serial.print("not syncing time. Using index entry: ");
+      Serial.println(nosync_idx);
+    }
     return;
   }
   Serial.println("connected to wifi");
