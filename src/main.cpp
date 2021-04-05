@@ -16,9 +16,6 @@
 #include <Fonts/FreeMono9pt7b.h>
 
 #include <DHT.h>
-#include <esp_sleep.h>
-#include <esp_wifi.h>
-#include <esp_bt.h>
 
 #include "wifiCredentials.h"
 
@@ -299,6 +296,7 @@ void printLocalTime()
 }
 
 void sync_time(bool blink_led) {
+  WiFi.mode(WIFI_STA);
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
   bool led = false;
   for (uint8_t trials = 0;
@@ -314,8 +312,8 @@ void sync_time(bool blink_led) {
   Serial.flush();
   if (WiFi.status() != WL_CONNECTED) {
     Serial.println("failed to connect to wifi:");
-    Serial.println(WIFI_SSID);
-    Serial.println(WIFI_PASSWORD);
+    Serial.println("SSID: \"" + String(WIFI_SSID) + "\"");
+    Serial.println("Password: \"" + String(WIFI_PASSWORD) + "\"");
     if (nosync_idx == -1) {
       nosync_idx = get_nosync_index();
       Serial.print("not syncing time. Using index entry: ");
@@ -323,7 +321,7 @@ void sync_time(bool blink_led) {
     }
     return;
   }
-  Serial.println("connected to wifi");
+  Serial.println("connected to wifi, IP: " + String(WiFi.localIP()) + " RSSI: " + String(WiFi.RSSI()));
   const long gmtOffset_sec = 3600;
   const int daylightOffset_sec = 3600;
   configTime(gmtOffset_sec, daylightOffset_sec, "fr.pool.ntp.org", "time.nist.gov", "time.windows.com");
@@ -394,14 +392,8 @@ void setup(){
   esp_sleep_enable_ext0_wakeup(GPIO_NUM_27, 1);
   esp_sleep_enable_timer_wakeup(sleep_duration);
 
-  // shutdown_rf();
   Serial.println("Going to sleep now for " + String(double(sleep_duration) / S_TO_uS_FACTOR, 0) + "s");
   esp_deep_sleep_start();
-}
-
-void shutdown_rf() {
-  esp_bt_controller_disable();
-  esp_wifi_disconnect();
 }
 
 void loop(){
